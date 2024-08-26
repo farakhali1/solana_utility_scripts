@@ -12,11 +12,20 @@ pip install -r requirements.txt
 
 This script [get_epoch_block_rewards.py](./get_epoch_block_rewards.py) calculates the block rewards for a specific validator in a given epoch (default: current epoch). Retrieves the leader slots for the validator, and calculates the total rewards for those slots.
 
-## How to run
+### How to run
 
 ```bash
+python3 get_epoch_block_rewards.py [-h] --identity_pubkey <IDENTITY_PUBKEY> [--rpc_url <RPC_URL>] [--req_per_sec <REQ_PER_SEC>] [--epoch <EPOCH>]
+```
 
-python3 get_epoch_block_rewards.py --help
+## Block Metrics Analyzer
 
-python script_name.py --identity_pubkey <IDENTITY_PUBKEY> [--rpc_url <RPC_URL>] [--req_per_sec <REQ_PER_SEC>] [--epoch <EPOCH>]
+## Overview
+
+The [block_metrics_analyzer.py](./block_metrics_analyzer.py) script is used to analyze various metrics for any given Solana blockchain block. It extracts key performance indicators such as slot, transaction counts, compute units (CUs), and block processing times.
+
+### How to run
+
+```bash
+python3 block_metrics_analyzer.py [-h] --start_slot START_SLOT [--cluster CLUSTER] [--rpc_url RPC_URL] [--count COUNT] [--req_per_sec REQ_PER_SEC]
 ```
