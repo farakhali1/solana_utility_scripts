@@ -5,7 +5,6 @@ import logging
 from solana.rpc.core import RPCException
 from solana.rpc.api import Client
 from solana.rpc.commitment import Confirmed
-from solders.pubkey import Pubkey
 
 
 class RateLimiter:
