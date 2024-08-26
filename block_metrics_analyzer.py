@@ -88,9 +88,9 @@ def fetch_next_leader_replay_time(slot, url, db):
                         for value in s["values"]:
                             replay_time = value[3] / 1000
             else:
-                print("No results found.")
+                logger.info("No results found.")
         else:
-            print(f"Failed to retrieve data. Status code: {response.status_code}")
+            logger.info(f"Failed to retrieve data. Status code: {response.status_code}")
     return replay_time
 
 
@@ -112,9 +112,9 @@ def fetch_leader_bank_time(slot, url, db, leader_identity):
                     for value in s["values"]:
                         leader_time = value[1]
         else:
-            print("No results found.")
+            logger.info("No results found.")
     else:
-        print(f"Failed to retrieve data. Status code: {response.status_code}")
+        logger.info(f"Failed to retrieve data. Status code: {response.status_code}")
     return leader_time
 
 
@@ -253,7 +253,7 @@ if __name__ == "__main__":
     logger.addHandler(handler)
     rate_limiter = RateLimiter(int(args.req_per_sec), logger=logger)
     
-    print(
+    logger.info(
         f"Getting (cluster = {args.cluster}) data about block from {args.start_slot} to {args.start_slot + args.count - 1}"
     )
 
@@ -265,5 +265,5 @@ if __name__ == "__main__":
     elif args.cluster == "t":
         process_slots(args, "tds")
     else:
-        print("invalid cluster type {use m=mainnet, t=testnet}")
+        logger.info("invalid cluster type {use m=mainnet, t=testnet}")
 
