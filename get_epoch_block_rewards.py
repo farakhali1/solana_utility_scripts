@@ -124,7 +124,7 @@ def get_leader_slots(
     return leader_slots
 
 
-def transfer_block_reward_to_intermediate_wallet(
+def calculate_block_rewards(
     identity_pubkey, rpc_url, rate_limiter, epoch=None
 ):
     try:
@@ -213,6 +213,6 @@ if __name__ == "__main__":
     logger.info(f"RPC URL: {args.rpc_url}")
     logger.info(f"RPC Rate Limit: {args.req_per_sec}")
 
-    transfer_block_reward_to_intermediate_wallet(
+    calculate_block_rewards(
         args.identity_pubkey, args.rpc_url, rate_limiter, epoch=args.epoch
     )

@@ -41,7 +41,7 @@ class RateLimiter:
 
 def connect_rpc_client(endpoint: str, rate_limiter: RateLimiter) -> Client:
     logger.info("Connecting to network at " + endpoint)
-    rpc_client = Client(endpoint=endpoint, commitment=Confirmed, timeout=30)
+    rpc_client = Client(endpoint=endpoint, commitment=Confirmed)
     for attempt in range(10):
         rate_limiter.check_rate_limit()
         try:
@@ -131,7 +131,7 @@ def get_block_for_slot(rpc_url, slot, rpc_client:Client, db, leader_identity):
     total_txn = 0
     total_vote_txn = 0
     total_cu = 0
-    total_fees = 0
+    block_reward = 0
     
     max_retries=3
     attempt = 0
@@ -143,14 +143,12 @@ def get_block_for_slot(rpc_url, slot, rpc_client:Client, db, leader_identity):
                 slot, max_supported_transaction_version=0
             )
             total_txn =resp.value.transactions.__len__()
+            block_reward += resp.value.rewards[0].lamports
             for each_txn in resp.value.transactions:
                 total_cu += each_txn.meta.compute_units_consumed
-                total_fees += each_txn.meta.fee
-                logger.info(f"{each_txn.transaction.message.account_keys}")
                 for eac_acc in  each_txn.transaction.message.account_keys:
                     if eac_acc.__str__() == "Vote111111111111111111111111111111111111111":
                         total_vote_txn +=1
-            block_reward = total_fees / 2
             leader_bank_time_ms = fetch_leader_bank_time(slot, rpc_url, db, leader_identity)
             replay_time_ms = fetch_next_leader_replay_time(slot, rpc_url, db)
             return {
@@ -163,6 +161,7 @@ def get_block_for_slot(rpc_url, slot, rpc_client:Client, db, leader_identity):
                     "leader_time_ms": round(leader_bank_time_ms, 2),
                     "replay_time_ms": round(replay_time_ms, 2),
                     "block_rewards": round(block_reward, 2),
+                    "block_rewards_sol": round(block_reward/1000000000, 3)
             }
             break
         except Exception as e:
@@ -192,6 +191,7 @@ def process_slots(args, db):
                     "leader_time_ms",
                     "replay_time_ms",
                     "block_rewards",
+                    "block_rewards_sol",
                 ],
             )
             writer.writeheader()

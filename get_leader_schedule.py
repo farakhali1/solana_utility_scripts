@@ -155,8 +155,9 @@ if __name__ == "__main__":
     # Logging Setup
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    log_file_name = f"{time.strftime('%Y-%m-%d%H-%M-%S')}.log"
-    handler = logging.FileHandler(log_file_name)
+    # log_file_name = f"{time.strftime('%Y-%m-%d%H-%M-%S')}.log"
+    log_file_name = f"leader-schedule.log"
+    handler = logging.FileHandler(log_file_name,mode="w")
     handler.setFormatter(
         logging.Formatter("[%(asctime)s] [%(levelname)s] [Line:%(lineno)d] %(message)s")
     )
