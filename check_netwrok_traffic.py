@@ -4,20 +4,25 @@ import time
 import os
 import csv
 import pandas as pd
-import argparse
-from collections import defaultdict
 from urllib.parse import quote
-
-from solana.rpc.core import RPCException
-from solana.rpc.api import Client
-from solana.rpc.commitment import Confirmed
 
 db_base_url = (
     "https://metrics.solana.com:3000/api/datasources/proxy/uid/HsKEnOt4z/query"
 )
 
+# tables name
+db_tables_names = {
+    "quic": "quic_streamer_tpu",
+    "sigverify": "tpu-verifier",
+    "sigverify_vote": "tpu-vote-verifier",
+    "quic_forwards": "quic_streamer_tpu_forwards",
+    "centeral_scheduler": "banking_stage_scheduler_counts",
+    "centeral_scheduler_banking": "banking_stage_worker_counts",
+    "multi_iterator_banking": "banking_stage-leader_slot_packet_counts",
+}
 
-selected_nodes_pubkeys = [
+# selected Node Pubkeys
+selected_node_pubkeys = [
     "7Zm1pE4FubFYZDyAQ5Labh3A4cxDcvve1s3WCRgEAZ84",
     "Awes4Tr6TX8JDzEhCZY2QVNimT6iD1zWHzf1vNyGvpLM",
     "Hz5aLvpKScNWoe9YZWxBLrQA3qzHJivBGtfciMekk8m5",
@@ -69,70 +74,31 @@ selected_nodes_pubkeys = [
 ]
 
 
-def connect_rpc_client(endpoint: str) -> Client:
-    print("Connecting to network at " + endpoint)
-    rpc_client = Client(endpoint=endpoint, commitment=Confirmed)
-    for attempt in range(10):
-        try:
-            res = rpc_client.get_slot(commitment=Confirmed).value
-            return rpc_client
-        except RPCException as e:
-            print(f"Error in RPC: {e}")
-        time.sleep(2)
-    msg = f"Error: Could not connect to cluster {endpoint} after 10 attempts. Script exited."
-    print(msg)
-    exit(-1)
+def sum_csv_rows_by_host_id(input_file, output_file_path):
+    df = pd.read_csv(input_file)
+    columns_to_sum = [col for col in df.columns if col != "host_id"]
+    result_df = df.groupby("host_id")[columns_to_sum].sum().reset_index()
+    file_exists = os.path.exists(output_file_path)
+    with open(output_file_path, mode="a", newline="") as output_file:
+        result_df.to_csv(output_file, index=False, header=not file_exists)
 
 
-output_directory = "/home/harkos/solana_utility_scripts/4-sep-network-traffic/"
-
-
-# Report and reset metrics iff the interval has elapsed and the worker did some work.
-def get_centeral_scheduler_banking_logs(start_time, end_time, url, db, leader_identity):
-    query = f"""SELECT * FROM "autogen"."banking_stage_worker_counts" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND "time" <={end_time} ORDER BY time ASC"""
-    encoded_query = quote(query)
-    url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
-    response = requests.get(url)
-    rows = 0
-    if response.status_code == 200:
-        series = response.json().get("results", [])[0].get("series", [])
-        if series:
-            data = series[0].get("values", [])
-            rows = len(data)
-            columns = series[0].get("columns", [])
-            with open(
-                f"{output_directory}/centeral_scheduler_banking/{leader_identity}.csv",
-                "w",
-                newline="",
-            ) as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(columns)
-                csvwriter.writerows(data)
-        else:
-            print(f"Series empty for leader {leader_identity}")
-            return
-    else:
-        print(f"Error in response for leader {leader_identity}")
-        return
-    print(f"Data fetched for leader identity {leader_identity}  | rows {rows}")
-
-
-def get_multiterator_scanner_banking_logs(
-    start_time, end_time, url, db, leader_identity
+def get_data_from_table(
+    db_name, table_name, leader_identity, start_time, end_time, output_file_path
 ):
-    query = f"""SELECT * FROM "autogen"."banking_stage-leader_slot_packet_counts" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND "time" <={end_time} ORDER BY time ASC"""
+    query = f"""SELECT * FROM "autogen"."{table_name}" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND "time" <={end_time} ORDER BY time ASC"""
     encoded_query = quote(query)
-    url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
+    url = f"{db_base_url}?db={db_name}&q={encoded_query}&epoch=ms"
     response = requests.get(url)
-    rows = 0
+    # rows = 0
     if response.status_code == 200:
         series = response.json().get("results", [])[0].get("series", [])
         if series:
             data = series[0].get("values", [])
-            rows = len(data)
+            # rows = len(data)
             columns = series[0].get("columns", [])
             with open(
-                f"{output_directory}/multiiterator_banking/{leader_identity}.csv",
+                output_file_path,
                 "w",
                 newline="",
             ) as csvfile:
@@ -140,214 +106,59 @@ def get_multiterator_scanner_banking_logs(
                 csvwriter.writerow(columns)
                 csvwriter.writerows(data)
         else:
-            print(f"Series empty for leader {leader_identity}")
+            print(f"No {table_name} data for leader {leader_identity}")
             return
     else:
-        print(f"Error in response for leader {leader_identity}")
+        print(f"Error in getting {table_name} data for leader {leader_identity}")
         return
-    print(f"Data fetched for leader identity {leader_identity}  | rows {rows}")
+    print(f"\t- '{table_name}' data fetched")
 
 
-# report only when has some data
-def get_centeral_scheduler_logs(start_time, end_time, url, db, leader_identity):
-    query = f"""SELECT * FROM "autogen"."banking_stage_scheduler_counts" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND "time" <={end_time} ORDER BY time ASC"""
-    encoded_query = quote(query)
-    url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
-    response = requests.get(url)
-    rows = 0
-    if response.status_code == 200:
-        series = response.json().get("results", [])[0].get("series", [])
-        if series:
-            data = series[0].get("values", [])
-            rows = len(data)
-            columns = series[0].get("columns", [])
-            with open(
-                f"{output_directory}/scheduler/{leader_identity}.csv",
-                "w",
-                newline="",
-            ) as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(columns)
-                csvwriter.writerows(data)
-        else:
-            print(f"Series empty for leader {leader_identity}")
-            return
-    else:
-        print(f"Error in response for leader {leader_identity}")
-        return
-    print(f"Data fetched for leader identity {leader_identity}  | rows {rows}")
-
-
-# No need to report a datapoint if no batches/packets received
-def get_voting_sigverify_logs(start_time, end_time, url, db, leader_identity):
-    query = f"""SELECT * FROM "autogen"."quic_streamer_tpu_forwards" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND "time" <={end_time} ORDER BY time ASC"""
-    encoded_query = quote(query)
-    url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
-    response = requests.get(url)
-    rows = 0
-    if response.status_code == 200:
-        series = response.json().get("results", [])[0].get("series", [])
-        if series:
-            data = series[0].get("values", [])
-            rows = len(data)
-            columns = series[0].get("columns", [])
-            with open(
-                f"{output_directory}/quic_streamer_tpu_forwards/{leader_identity}.csv",
-                "w",
-                newline="",
-            ) as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(columns)
-                csvwriter.writerows(data)
-        else:
-            print(f"Series empty for leader {leader_identity}")
-            return
-    else:
-        print(f"Error in response for leader {leader_identity}")
-        return
-    print(f"Data fetched for leader identity {leader_identity}  | rows {rows}")
-
-
-# No need to report a datapoint if no batches/packets received
-def get_sigverify_logs(start_time, end_time, url, db, leader_identity):
-    query = f"""SELECT * FROM "autogen"."tpu-verifier" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND  "time" <={end_time} ORDER BY time ASC"""
-    encoded_query = quote(query)
-    url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
-    response = requests.get(url)
-    rows = 0
-    if response.status_code == 200:
-        series = response.json().get("results", [])[0].get("series", [])
-        if series:
-            data = series[0].get("values", [])
-            rows = len(data)
-            columns = series[0].get("columns", [])
-            with open(
-                f"{output_directory}/sigverify/{leader_identity}.csv",
-                "w",
-                newline="",
-            ) as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(columns)
-                csvwriter.writerows(data)
-        else:
-            print(f"Series empty for leader {leader_identity}")
-            return
-    else:
-        print(f"Error in response for leader {leader_identity}")
-        return
-    print(f"Data fetched for leader identity {leader_identity}  | rows {rows}")
-
-
-# report metrics when last report time elapsed time > 5sec
-def get_quic_logs(start_time, end_time, url, db, leader_identity):
-    query = f"""SELECT * FROM "autogen"."quic_streamer_tpu_forwards" WHERE "host_id"='{leader_identity}' AND "time">={start_time} AND "time" <={end_time} ORDER BY time ASC"""
-    encoded_query = quote(query)
-    url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
-    response = requests.get(url)
-    rows = 0
-    if response.status_code == 200:
-        series = response.json().get("results", [])[0].get("series", [])
-        if series:
-            data = series[0].get("values", [])
-            rows = len(data)
-            columns = series[0].get("columns", [])
-            with open(
-                f"{output_directory}/quic/{leader_identity}.csv",
-                "w",
-                newline="",
-            ) as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(columns)
-                csvwriter.writerows(data)
-        else:
-            print(f"Series empty for leader {leader_identity}")
-            return
-    else:
-        print(f"Error in response for leader {leader_identity}")
-        return
-    print(f"Data fetched for leader identity {leader_identity}  | rows {rows}")
-
-
-# f"{output_directory}/quic/{leader_identity}.csv"
-def sum_csv_rows_by_host_id(leader_identity, output_file_path):
-    input_file = f"{output_directory}/quic_streamer_tpu_forwards/{leader_identity}.csv"
-    if os.path.exists(input_file):
-        df = pd.read_csv(input_file)
-        columns_to_sum = [col for col in df.columns if col != "host_id"]
-        result_df = df.groupby("host_id")[columns_to_sum].sum().reset_index()
-        file_exists = os.path.exists(output_file_path)
-        with open(output_file_path, mode="a", newline="") as output_file:
-            result_df.to_csv(output_file, index=False, header=not file_exists)
-
-        print(f"Results successfully written to {output_file_path}")
-
-
-def get_cluster_node_pubkeys(rpc_client: Client):
-    cluster_nodes = rpc_client.get_cluster_nodes().value
-    # print(f"Total Nodes {cluster_nodes}")
-    cluster_nodes_pubkey = []
-    for each in cluster_nodes:
-        node_json = json.loads(each.to_json())
-        pubkey = node_json.get("pubkey")
-        if pubkey:
-            cluster_nodes_pubkey.append(pubkey)
-    return cluster_nodes_pubkey
-
-
-def extract_data_from_db(args, db):
+def extract_data_from_db(
+    db_name, directory_path, leader_identity, start_time, end_time
+):
     try:
-        start_time = 1725249260000000000
-        end_time = 1725437099000000000
-        # rpc_client = connect_rpc_client(args.rpc_url)
-        # cluster_node_pubkey = get_cluster_node_pubkeys(rpc_client)
-        # print(f"Total Nodes {cluster_node_pubkey}")
-        for each_leader in selected_nodes_pubkeys:
-            get_voting_sigverify_logs(
-                start_time,
-                end_time,
-                args.rpc_url,
-                db,
-                each_leader,
+        for table_key, table_name in db_tables_names.items():
+            output_file = f"{directory_path}/{table_key}/{leader_identity}.csv"
+            get_data_from_table(
+                db_name, table_name, leader_identity, start_time, end_time, output_file
             )
-            # sum_csv_rows_by_host_id(
-            #     each_leader, f"{output_directory}/quic_streamer_tpu_forwards/combined.csv"
-            # )
+            sum_csv_rows_by_host_id(
+                output_file,
+                f"{directory_path}/{table_key}/summarized_data_by_identity.csv",
+            )
 
     except Exception as e:
-        msg = f"Error: error block metrics calculation {e}"
+        msg = f"Error: Error in extracting data from metrics DB | Error: {e}"
         print(msg)
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Calculates and reports various metrics for any given block"
-    )
-    parser.add_argument(
-        "--cluster",
-        type=str,
-        default="m",
-        help="Cluster m=mainnet, t=testnet",
-        required=False,
-    )
-    parser.add_argument(
-        "--rpc_url",
-        type=str,
-        default="https://api.mainnet-beta.solana.com",
-        help="RPC URL for query data from chain",
-    )
-    return parser.parse_args()
+def setup_directories(output_directory_path):
+    try:
+        os.makedirs(output_directory_path)
+    except Exception as e:
+        print(f"Directory already Exist {e}")
+        exit(-1)
+    for each_table in db_tables_names:
+        os.makedirs(f"{output_directory_path}/{each_table}")
 
 
 def main():
-    args = parse_args()
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    output_directory_path = (
+        f"{current_dir}/network_traffic_{time.strftime('%Y-%m-%d-%H')}"
+    )
+    setup_directories(output_directory_path)
 
-    if args.cluster == "m":
-        extract_data_from_db(args, "mainnet-beta")
-    elif args.cluster == "t":
-        extract_data_from_db(args, "tds")
-    else:
-        print("invalid cluster type {use m=mainnet, t=testnet}")
-
+    start_time = 1725249260000000000
+    end_time = 1725437099000000000
+    for each_leader in selected_node_pubkeys:
+        print(f"Fetching Data for Leader {each_leader}")
+        extract_data_from_db(
+            "mainnet-beta", output_directory_path, each_leader, start_time, end_time
+        )
+        print("")
+        
 
 if __name__ == "__main__":
 
