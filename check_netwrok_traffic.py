@@ -1,10 +1,15 @@
 import requests
-import json
 import time
 import os
 import csv
+import argparse
 import pandas as pd
 from urllib.parse import quote
+
+
+from solana.rpc.core import RPCException
+from solana.rpc.api import Client
+from solana.rpc.commitment import Confirmed
 
 db_base_url = (
     "https://metrics.solana.com:3000/api/datasources/proxy/uid/HsKEnOt4z/query"
@@ -143,22 +148,125 @@ def setup_directories(output_directory_path):
         os.makedirs(f"{output_directory_path}/{each_table}")
 
 
+def connect_rpc_client(endpoint: str) -> Client:
+    print("Connecting to network at " + endpoint)
+    rpc_client = Client(endpoint=endpoint, commitment=Confirmed, timeout=30)
+    for attempt in range(10):
+        try:
+            res = rpc_client.get_slot(commitment=Confirmed).value
+            return rpc_client
+        except RPCException as e:
+            print(f"Error in RPC: {e}")
+        time.sleep(2)
+    print(
+        f"Error: Could not connect to cluster {endpoint} after 10 attempts. Script exited."
+    )
+    exit(-1)
+
+
+def parse_args():
+    # Argument Parsing
+    parser = argparse.ArgumentParser(
+        description="Extract Selected Validators logs to Analyse Network Traffic Demand"
+    )
+    parser.add_argument(
+        "--rpc_url",
+        type=str,
+        default="https://api.mainnet-beta.solana.com",
+        help="RPC URL for query Epoch info from chain",
+    )
+    parser.add_argument(
+        "--epoch",
+        type=int,
+        default=None,
+        help="Get Network Traffic Stats for given Epoch (default: current_epoch - 1)",
+    )
+    args = parser.parse_args()
+    return args
+
+
+def get_first_slot_in_epoch(
+    first_normal_epoch, slots_per_epoch, first_normal_slot, epoch
+):
+    MINIMUM_SLOTS_PER_EPOCH = 32
+    if epoch <= first_normal_epoch:
+        return (2**epoch - 1) * MINIMUM_SLOTS_PER_EPOCH
+    else:
+        return (epoch - first_normal_epoch) * slots_per_epoch + first_normal_slot
+
+
+def get_slot_time(rpc_client: Client, slot):
+    max_retries = 5
+    attempt = 0
+    time = None
+    while attempt < max_retries:
+        try:
+            time = rpc_client.get_block_time(slot).value
+            break
+        except Exception as e:
+            attempt += 1
+    return time
+
+
+def get_epoch_start_end_time(args):
+    rpc_client = connect_rpc_client(args.rpc_url)
+    try:
+        epoch_info = rpc_client.get_epoch_info(commitment=Confirmed).value
+    except Exception as e:
+        print("Unable to get epoch info")
+        exit(-1)
+    target_epoch = epoch_info.epoch if args.epoch is None else args.epoch
+    if target_epoch > epoch_info.epoch:
+        print(f"Invalid Epoch {args.epoch} Specified current epoch {target_epoch}")
+        exit(-1)
+    try:
+        epoch_schedule = rpc_client.get_epoch_schedule().value
+    except Exception as e:
+        print("Unable to get epoch schedule info")
+        exit(-1)
+
+    first_slot = get_first_slot_in_epoch(
+        epoch_schedule.first_normal_epoch,
+        epoch_schedule.slots_per_epoch,
+        epoch_schedule.first_normal_slot,
+        target_epoch,
+    )
+    start_time = get_slot_time(rpc_client, first_slot)
+    end_time = get_slot_time(rpc_client, (first_slot + 431999))
+
+    if start_time is None:
+        print("Unable to fetch Epoch Start Time")
+        exit(-1)
+    if end_time is None:
+        print("Unable to fetch Epoch End Time")
+        exit(-1)
+    print(
+        f"Getting Network Traffic Stats for EPoch {target_epoch} | First Slot {first_slot} Start Time {start_time} last slot {(first_slot+431999)} end time {end_time}"
+    )
+    return (start_time * 1000000000, end_time * 1000000000)
+
+
 def main():
+    args = parse_args()
+    epoch_start_time, epoch_end_time = get_epoch_start_end_time(args)
+
     current_dir = os.path.dirname(os.path.abspath(__file__))
     output_directory_path = (
         f"{current_dir}/network_traffic_{time.strftime('%Y-%m-%d-%H')}"
     )
     setup_directories(output_directory_path)
 
-    start_time = 1725249260000000000
-    end_time = 1725437099000000000
     for each_leader in selected_node_pubkeys:
         print(f"Fetching Data for Leader {each_leader}")
         extract_data_from_db(
-            "mainnet-beta", output_directory_path, each_leader, start_time, end_time
+            "mainnet-beta",
+            output_directory_path,
+            each_leader,
+            epoch_start_time,
+            epoch_end_time,
         )
         print("")
-        
+
 
 if __name__ == "__main__":
 
