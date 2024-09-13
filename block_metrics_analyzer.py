@@ -2,12 +2,14 @@ import requests
 import json
 import time
 import csv
+import os
 import logging
 import argparse
 from urllib.parse import quote
 from solana.rpc.core import RPCException
 from solana.rpc.api import Client
 from solana.rpc.commitment import Confirmed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Database URL
 db_base_url = (
@@ -20,29 +22,35 @@ testnet_hashing_program_id = [
 ]
 
 
-# RateLimiter class definition
 class RateLimiter:
     def __init__(self, max_requests_per_second, logger=None):
         self.max_requests_per_second = max_requests_per_second
-        self.interval = 1.0 / max_requests_per_second
-        self.last_request_time = None
+        self.requests_made = 0
+        self.start_time = time.time()
         self.logger = logger or logging.getLogger(__name__)
 
     def check_rate_limit(self):
         current_time = time.time()
-        if self.last_request_time is not None:
-            elapsed_time = current_time - self.last_request_time
-            if elapsed_time < self.interval:
-                wait_time = self.interval - elapsed_time
-                self.logger.info(
-                    f"Rate limit exceeded. Waiting for {wait_time:.2f} seconds."
-                )
-                time.sleep(wait_time)
+        elapsed_time = current_time - self.start_time
 
-        self.last_request_time = time.time()
+        if elapsed_time >= 1.0:
+            self.requests_made = 0
+            self.start_time = current_time
+            self.logger.info("Reset request counter after 1 second.")
+
+        if self.requests_made >= self.max_requests_per_second:
+            wait_time = 1.0 - elapsed_time
+            self.logger.info(
+                f"Rate limit reached. Waiting for {wait_time:.2f} seconds."
+            )
+            time.sleep(wait_time)
+            self.requests_made = 0
+            self.start_time = time.time()
+
+        self.requests_made += 1
+        # self.logger.info(f"Request {self.requests_made} made at {time.time()}")
 
 
-# Connect to RPC client with retries
 def connect_rpc_client(endpoint: str, rate_limiter: RateLimiter) -> Client:
     logger.info("Connecting to network at " + endpoint)
     rpc_client = Client(endpoint=endpoint, commitment=Confirmed)
@@ -59,7 +67,6 @@ def connect_rpc_client(endpoint: str, rate_limiter: RateLimiter) -> Client:
     exit(-1)
 
 
-# Fetch leader identity for the next slot
 def get_slot_leader(slot, url):
     headers = {"Content-Type": "application/json"}
     data = {"jsonrpc": "2.0", "id": 1, "method": "getSlotLeaders", "params": [slot, 1]}
@@ -69,7 +76,6 @@ def get_slot_leader(slot, url):
     return None
 
 
-# Fetch the replay time for the next slot
 def fetch_next_leader_replay_time(slot, url, db):
     next_slot_leader = get_slot_leader(slot + 4, url)
     replay_time = 0
@@ -105,7 +111,26 @@ def fetch_leader_bank_time(slot, url, db, leader_identity):
     return leader_time
 
 
-# Fetch block data for a given slot
+def check_next_block(rpc_client: Client, slot, max_retries=3):
+    attempt = 0
+    is_next_block_created = False
+    while attempt < max_retries:
+        try:
+
+            rate_limiter.check_rate_limit()
+            resp = rpc_client.get_block(slot, max_supported_transaction_version=0)
+
+            if not resp or not resp.value:
+                logger.info(f"Slot {slot} was skipped or missing. Returning None.")
+                break
+            is_next_block_created = True
+            break
+        except Exception as e:
+            attempt += 1
+            logger.error(f"Error in RPC for slot {slot}, retry attempt {attempt}: {e}")
+    return is_next_block_created
+
+
 def get_block_for_slot(
     cluster,
     rpc_url,
@@ -125,7 +150,9 @@ def get_block_for_slot(
     attempt = 0
     while attempt < max_retries:
         try:
-            logger.info(f"Calculating block reward for slot {slot}")
+            logger.info(
+                f"Calculating metrics for slot {slot} | is last_leader slot {is_last_leader_slot}"
+            )
             rate_limiter.check_rate_limit()
             resp = rpc_client.get_block(slot, max_supported_transaction_version=0)
 
@@ -165,6 +192,9 @@ def get_block_for_slot(
             attempt += 1
             logger.error(f"Error in RPC for slot {slot}, retry attempt {attempt}: {e}")
 
+    is_next_block_created = False
+    if is_last_leader_slot:
+        is_next_block_created = check_next_block(rpc_client, slot + 1)
     if cluster == "t":
         others = (
             total_txn
@@ -200,6 +230,7 @@ def get_block_for_slot(
             "replay_time_ms": round(replay_time_ms, 5),
             "block_rewards": round(block_reward, 5),
             "block_rewards_sol": round(block_reward / 1000000000, 5),
+            "next_block_created": is_next_block_created if is_last_leader_slot else "",
         }
     else:
         return {
@@ -213,10 +244,10 @@ def get_block_for_slot(
             "replay_time_ms": round(replay_time_ms, 5),
             "block_rewards": round(block_reward, 5),
             "block_rewards_sol": round(block_reward / 1000000000, 5),
+            "next_block_created": is_next_block_created if is_last_leader_slot else "",
         }
 
 
-# Slot processing
 def process_slots(args, db):
     try:
         rpc_client = connect_rpc_client(args.rpc_url, rate_limiter)
@@ -224,7 +255,34 @@ def process_slots(args, db):
         leader_identity = get_slot_leader(args.start_slot, args.rpc_url)
         logger.info(f"Leader for first slot {args.start_slot}: {leader_identity}")
 
-        with open(args.output_file, mode="w", newline="") as file:
+        results = {}
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {}
+            for i, slot in enumerate(slots):
+
+                futures[
+                    executor.submit(
+                        get_block_for_slot,
+                        args.cluster,
+                        args.rpc_url,
+                        slot,
+                        rpc_client,
+                        db,
+                        leader_identity,
+                        True if (i + 1) % 4 == 0 else False,
+                    )
+                ] = slot
+            for future in as_completed(futures):
+                slot = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results[slot] = result
+                except Exception as e:
+                    logger.error(f"Error processing slot {slot}: {e}")
+        file_exists = os.path.isfile(args.output_file)
+        with open(args.output_file, mode="a", newline="") as file:
+
             if args.cluster == "t":
                 writer = csv.DictWriter(
                     file,
@@ -242,6 +300,7 @@ def process_slots(args, db):
                         "replay_time_ms",
                         "block_rewards",
                         "block_rewards_sol",
+                        "next_block_created",
                     ],
                 )
             else:
@@ -258,28 +317,18 @@ def process_slots(args, db):
                         "replay_time_ms",
                         "block_rewards",
                         "block_rewards_sol",
+                        "next_block_created",
                     ],
                 )
-            writer.writeheader()
-
-            for slot in slots:
-                logger.info(f"Processing slot: {slot}")
-                result = get_block_for_slot(
-                    args.cluster,
-                    args.rpc_url,
-                    slot,
-                    rpc_client,
-                    db,
-                    leader_identity,
-                )
-                if result:
-                    writer.writerow(result)
+            if not file_exists:
+                writer.writeheader()
+            for slot in sorted(results.keys()):
+                writer.writerow(results[slot])
 
     except Exception as e:
         logger.error(f"Error during slot processing: {e}")
 
 
-# Command line arguments
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process Solana block data")
     parser.add_argument(
