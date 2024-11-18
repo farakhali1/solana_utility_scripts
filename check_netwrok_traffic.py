@@ -5,7 +5,7 @@ import csv
 import argparse
 import pandas as pd
 from urllib.parse import quote
-
+import requests
 
 from solana.rpc.core import RPCException
 from solana.rpc.api import Client
@@ -29,7 +29,6 @@ db_tables_names = {
     "multi_iterator_banking": "banking_stage-leader_slot_packet_counts",
     "multi_iterator_banking_error": "banking_stage-leader_slot_transaction_errors",
 }
-
 # selected Node Pubkeys
 selected_node_pubkeys = [
     "7Zm1pE4FubFYZDyAQ5Labh3A4cxDcvve1s3WCRgEAZ84",
@@ -81,6 +80,35 @@ selected_node_pubkeys = [
     "2gDeeRa3mwPPtw1CMWPkEhRWo9v5izNBBfEXanr8uibX",
     "Ed9WjPnZfAXsPttcqxMwj94qsuXVRyBsyXnDkxFva2Zv",
 ]
+
+
+def get_block_time_with_retries(url, block_number, retries=12, delay=2):
+    headers = {"Content-Type": "application/json"}
+    for attempt in range(retries):
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBlockTime",
+            "params": [block_number + attempt],
+        }
+        print(f"Requesting block time for block number {block_number}")
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+
+            if response.status_code == 200:
+                return int(response.json()["result"])
+
+            print(
+                f"Attempt {attempt + 1} failed with status code {response.status_code}"
+            )
+        except requests.RequestException as e:
+            print(f"Attempt {attempt + 1} failed with error: {e}")
+
+        time.sleep(delay)
+
+    print("All retry attempts failed.")
+    return None
 
 
 def sum_csv_rows_by_host_id(input_file, output_file_path):
@@ -176,13 +204,13 @@ def parse_args():
     parser.add_argument(
         "--rpc_url",
         type=str,
-        default="https://api.mainnet-beta.solana.com",
+        default="https://mainnet.helius-rpc.com/?api-key=3ccd3ceb-7ef3-42e9-a155-708552f77a35",
         help="RPC URL for query Epoch info from chain",
     )
     parser.add_argument(
         "--epoch",
         type=int,
-        default=None,
+        default=697,
         help="Get Network Traffic Stats for given Epoch (default: current_epoch - 1)",
     )
     args = parser.parse_args()
@@ -205,7 +233,9 @@ def get_slot_time(rpc_client: Client, slot):
     time = None
     while attempt < max_retries:
         try:
-            time = rpc_client.get_block_time(slot).value
+            time = rpc_client.get_block(
+                slot, max_supported_transaction_version=0
+            ).value.block_time
             break
         except Exception as e:
             attempt += 1
@@ -235,8 +265,11 @@ def get_epoch_start_end_time(args):
         epoch_schedule.first_normal_slot,
         target_epoch,
     )
-    start_time = get_slot_time(rpc_client, first_slot)
-    end_time = get_slot_time(rpc_client, (first_slot + 431999))
+    # start_time = get_slot_time(rpc_client, first_slot)
+    # end_time = get_slot_time(rpc_client, (first_slot + 431999))
+
+    start_time = get_block_time_with_retries(args.rpc_url, first_slot)
+    end_time = get_block_time_with_retries(args.rpc_url, (first_slot + 431999))
 
     if start_time is None:
         print("Unable to fetch Epoch Start Time")
@@ -255,9 +288,7 @@ def main():
     epoch_start_time, epoch_end_time = get_epoch_start_end_time(args)
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    output_directory_path = (
-        f"{current_dir}/network_traffic_{time.strftime('%Y-%m-%d-%H')}"
-    )
+    output_directory_path = f"{current_dir}/epoch_{args.epoch}_network_traffic_{time.strftime('%Y-%m-%d-%H')}"
     setup_directories(output_directory_path)
 
     for each_leader in selected_node_pubkeys:
