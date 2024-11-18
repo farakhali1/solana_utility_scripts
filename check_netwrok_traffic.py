@@ -18,12 +18,16 @@ db_base_url = (
 # tables name
 db_tables_names = {
     "quic": "quic_streamer_tpu",
+    "quic_forwards": "quic_streamer_tpu_forwards",
     "sigverify": "tpu-verifier",
     "sigverify_vote": "tpu-vote-verifier",
-    "quic_forwards": "quic_streamer_tpu_forwards",
-    "centeral_scheduler": "banking_stage_scheduler_counts",
-    "centeral_scheduler_banking": "banking_stage_worker_counts",
+    "centeral_scheduler_counts": "banking_stage_scheduler_counts",
+    "centeral_scheduler_timing": "banking_stage_scheduler_timing",
+    "centeral_scheduler_banking_counts": "banking_stage_worker_counts",
+    "centeral_scheduler_banking_timing": "banking_stage_worker_timing",
+    "centeral_scheduler_banking_error": "banking_stage_worker_error_metrics",
     "multi_iterator_banking": "banking_stage-leader_slot_packet_counts",
+    "multi_iterator_banking_error": "banking_stage-leader_slot_transaction_errors",
 }
 
 # selected Node Pubkeys
