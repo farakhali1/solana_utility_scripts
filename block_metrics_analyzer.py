@@ -77,13 +77,13 @@ def get_slot_leader(slot, url):
 
 
 def fetch_next_leader_replay_time(slot, url, db):
-    next_slot_leader = get_slot_leader(slot + 4, url)
-    replay_time = 0
-    if next_slot_leader:
-        query = f"""SELECT time,slot,replay_time,replay_total_elapsed FROM "autogen"."replay-slot-stats" WHERE "host_id"='{next_slot_leader}' AND slot={slot} ORDER BY time ASC LIMIT 10"""
+    def get_slot_stats(slot, leader):
+        query = f"""SELECT time, slot, replay_time, replay_total_elapsed, total_entries 
+                    FROM "autogen"."replay-slot-stats" 
+                    WHERE "host_id"='{leader}' AND slot={slot} ORDER BY time ASC LIMIT 10"""
         encoded_query = quote(query)
-        url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
-        response = requests.get(url)
+        request_url = f"{db_base_url}?db={db}&q={encoded_query}&epoch=ms"
+        response = requests.get(request_url)
         if response.status_code == 200:
             data = response.json().get("results", [])
             for result in data:
@@ -91,7 +91,19 @@ def fetch_next_leader_replay_time(slot, url, db):
                 for s in series:
                     for value in s["values"]:
                         replay_time = value[3] / 1000
-    return replay_time
+                        total_entries = value[4]
+                        return replay_time, total_entries
+        return None, None
+
+    next_slot_offsets = [4, 8, 12, 16, 20]
+    for offset in next_slot_offsets:
+        next_slot_leader = get_slot_leader(slot + offset, url)
+        if next_slot_leader:
+            replay_time, total_entries = get_slot_stats(slot, next_slot_leader)
+            if replay_time is not None:
+                return replay_time, total_entries
+
+    return 0, 0
 
 
 # Fetch the bank time for the leader slot
@@ -148,6 +160,7 @@ def get_block_for_slot(
 
     max_retries = 3
     attempt = 0
+    total_entries = 0
     while attempt < max_retries:
         try:
             logger.info(
@@ -186,7 +199,9 @@ def get_block_for_slot(
             leader_bank_time_ms = fetch_leader_bank_time(
                 slot, rpc_url, db, leader_identity
             )
-            replay_time_ms = fetch_next_leader_replay_time(slot, rpc_url, db)
+            replay_time_ms, total_entries = fetch_next_leader_replay_time(
+                slot, rpc_url, db
+            )
             break
         except Exception as e:
             attempt += 1
@@ -231,6 +246,9 @@ def get_block_for_slot(
             "block_rewards": round(block_reward, 5),
             "block_rewards_sol": round(block_reward / 1000000000, 5),
             "next_block_created": is_next_block_created if is_last_leader_slot else "",
+            "TPS": "",
+            "True TPS": "",
+            "total_entries": total_entries,
         }
     else:
         return {
@@ -245,6 +263,8 @@ def get_block_for_slot(
             "block_rewards": round(block_reward, 5),
             "block_rewards_sol": round(block_reward / 1000000000, 5),
             "next_block_created": is_next_block_created if is_last_leader_slot else "",
+            "TPS": "",
+            "True TPS": "",
         }
 
 
@@ -256,7 +276,7 @@ def process_slots(args, db):
         logger.info(f"Leader for first slot {args.start_slot}: {leader_identity}")
 
         results = {}
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {}
             for i, slot in enumerate(slots):
 
@@ -301,6 +321,9 @@ def process_slots(args, db):
                         "block_rewards",
                         "block_rewards_sol",
                         "next_block_created",
+                        "TPS",
+                        "True TPS",
+                        "total_entries",
                     ],
                 )
             else:
@@ -318,6 +341,8 @@ def process_slots(args, db):
                         "block_rewards",
                         "block_rewards_sol",
                         "next_block_created",
+                        "TPS",
+                        "True TPS",
                     ],
                 )
             if not file_exists:
