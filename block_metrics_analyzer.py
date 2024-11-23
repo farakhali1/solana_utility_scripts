@@ -247,7 +247,7 @@ def get_block_for_slot(
             "block_rewards_sol": round(block_reward / 1000000000, 5),
             "next_block_created": is_next_block_created if is_last_leader_slot else "",
             "TPS": "",
-            "True TPS": "",
+            "True_TPS": "",
             "total_entries": total_entries,
         }
     else:
@@ -264,7 +264,8 @@ def get_block_for_slot(
             "block_rewards_sol": round(block_reward / 1000000000, 5),
             "next_block_created": is_next_block_created if is_last_leader_slot else "",
             "TPS": "",
-            "True TPS": "",
+            "True_TPS": "",
+            "total_entries": total_entries,
         }
 
 
@@ -322,7 +323,7 @@ def process_slots(args, db):
                         "block_rewards_sol",
                         "next_block_created",
                         "TPS",
-                        "True TPS",
+                        "True_TPS",
                         "total_entries",
                     ],
                 )
@@ -342,12 +343,25 @@ def process_slots(args, db):
                         "block_rewards_sol",
                         "next_block_created",
                         "TPS",
-                        "True TPS",
+                        "True_TPS",
+                        "total_entries",
                     ],
                 )
             if not file_exists:
                 writer.writeheader()
-            for slot in sorted(results.keys()):
+            sorted_keys = sorted(results.keys())
+            if len(sorted_keys) >= 4:
+                tps_value = (
+                    sum(results[sorted_keys[i]]["total_txn"] for i in range(4))
+                ) / 1.6
+                true_tps_value = (
+                    sum(results[sorted_keys[i]]["total_txn"] for i in range(4))
+                    - sum(results[sorted_keys[i]]["total_vote_txn"] for i in range(4))
+                ) / 1.6
+                results[sorted_keys[3]]["TPS"] = round(tps_value, 0)
+                results[sorted_keys[3]]["True_TPS"] = round(true_tps_value, 0)
+
+            for slot in sorted_keys:
                 writer.writerow(results[slot])
 
     except Exception as e:
