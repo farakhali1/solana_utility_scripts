@@ -351,15 +351,26 @@ def process_slots(args, db):
                 writer.writeheader()
             sorted_keys = sorted(results.keys())
             if len(sorted_keys) >= 4:
-                tps_value = (
-                    sum(results[sorted_keys[i]]["total_txn"] for i in range(4))
-                ) / 1.6
-                true_tps_value = (
-                    sum(results[sorted_keys[i]]["total_txn"] for i in range(4))
-                    - sum(results[sorted_keys[i]]["total_vote_txn"] for i in range(4))
-                ) / 1.6
-                results[sorted_keys[3]]["TPS"] = round(tps_value, 0)
-                results[sorted_keys[3]]["True_TPS"] = round(true_tps_value, 0)
+                for i in range(0, len(sorted_keys), 4):
+                    if i + 3 < len(sorted_keys):
+                        tps_value = (
+                            sum(
+                                results[sorted_keys[j]]["total_txn"]
+                                for j in range(i, i + 4)
+                            )
+                        ) / 1.6
+                        true_tps_value = (
+                            sum(
+                                results[sorted_keys[j]]["total_txn"]
+                                for j in range(i, i + 4)
+                            )
+                            - sum(
+                                results[sorted_keys[j]]["total_vote_txn"]
+                                for j in range(i, i + 4)
+                            )
+                        ) / 1.6
+                        results[sorted_keys[i + 3]]["TPS"] = round(tps_value)
+                        results[sorted_keys[i + 3]]["True_TPS"] = round(true_tps_value)
 
             for slot in sorted_keys:
                 writer.writerow(results[slot])
