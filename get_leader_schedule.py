@@ -57,7 +57,7 @@ def get_first_slot_in_epoch(
 
 
 def get_leader_slots(
-    rpc_client: Client, identity_pubkey, epoch, rate_limiter: RateLimiter
+    rpc_client: Client, identity_pubkey, epoch, rate_limiter: RateLimiter, logger=None
 ):
     rate_limiter.check_rate_limit()
     epoch_schedule = rpc_client.get_epoch_schedule().value
@@ -82,6 +82,7 @@ def get_leader_slots(
             leader_slots.append(item + first_slot)
     return leader_slots
 
+
 def format_time(seconds):
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -89,16 +90,17 @@ def format_time(seconds):
 
 
 def display_slots(leader_slots, current_slot):
-    logger.info(f"{'COUNT':<5} {'Leader Slot':<15} {'SLOT DIFF':<15} {'TIME (HR:MIN:SEC)'}")
+    logger.info(
+        f"{'COUNT':<5} {'Leader Slot':<15} {'SLOT DIFF':<15} {'TIME (HR:MIN:SEC)'}"
+    )
     for count, slot in enumerate(leader_slots, 1):
         slot_diff = slot - current_slot
-        time_diff = format_time(abs(slot_diff/2.5))
+        time_diff = format_time(abs(slot_diff / 2.5))
         status = "Passed" if slot_diff <= 0 else "Pending"
         logger.info(f"{count:<5} {slot:<15} {slot_diff:<15} {time_diff} ({status})")
 
-def get_leader_schedule(
-    identity_pubkey, rpc_url, rate_limiter, epoch=None
-):
+
+def get_leader_schedule(identity_pubkey, rpc_url, rate_limiter, epoch=None):
     try:
         rpc_client = connect_rpc_client(rpc_url, rate_limiter)
         rate_limiter.check_rate_limit()
@@ -108,9 +110,11 @@ def get_leader_schedule(
         leader_slots = get_leader_slots(
             rpc_client, identity_pubkey, target_epoch, rate_limiter
         )
-        logger.info(f"Validator {identity_pubkey} has {len(leader_slots)} leader slot in epoch {target_epoch}")
+        logger.info(
+            f"Validator {identity_pubkey} has {len(leader_slots)} leader slot in epoch {target_epoch}"
+        )
         current_slot = rpc_client.get_slot(commitment=Confirmed).value
-        display_slots(leader_slots,current_slot)
+        display_slots(leader_slots, current_slot)
     except Exception as e:
         msg = f"Error: error in getting leader schedule {e}"
         logger.info(msg)
@@ -157,7 +161,7 @@ if __name__ == "__main__":
     logger.setLevel(logging.INFO)
     # log_file_name = f"{time.strftime('%Y-%m-%d%H-%M-%S')}.log"
     log_file_name = f"leader-schedule.log"
-    handler = logging.FileHandler(log_file_name,mode="w")
+    handler = logging.FileHandler(log_file_name, mode="w")
     handler.setFormatter(
         logging.Formatter("[%(asctime)s] [%(levelname)s] [Line:%(lineno)d] %(message)s")
     )
