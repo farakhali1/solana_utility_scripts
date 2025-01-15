@@ -108,7 +108,7 @@ def get_leader_schedule(identity_pubkey, rpc_url, rate_limiter, epoch=None):
         target_epoch = current_epoch if epoch is None else epoch
         logger.info(f"Current Epoch {current_epoch} Target Epoch {target_epoch}")
         leader_slots = get_leader_slots(
-            rpc_client, identity_pubkey, target_epoch, rate_limiter
+            rpc_client, identity_pubkey, target_epoch, rate_limiter, logger
         )
         logger.info(
             f"Validator {identity_pubkey} has {len(leader_slots)} leader slot in epoch {target_epoch}"
@@ -175,3 +175,7 @@ if __name__ == "__main__":
     get_leader_schedule(
         args.identity_pubkey, args.rpc_url, rate_limiter, epoch=args.epoch
     )
+
+
+# python3 get_leader_schedule.py --rpc_url https://mainnet.helius-rpc.com/?api-key=3ccd3ceb-7ef3-42e9-a155-708552f77a35 --identity Ed9WjPnZfAXsPttcqxMwj94qsuXVRyBsyXnDkxFva2Zv &
+# python3 -u get_leader_schedule.py --identity 3hLQCguLNPe7XUouGDKqDXjCqSgzWiVzHmionC32f11Q --rpc_url https://api.testnet.solana.com &
